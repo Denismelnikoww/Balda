@@ -1,0 +1,175 @@
+openapi: 3.0.3
+info:
+  title: delivery.integrations
+  version: 1.0.0
+  description: Исполнение действий во внешних сервисах через ACL. Внешних клиентских API нет — только admin/internal.
+servers:
+  - url: https://api.gonyatbaldu.local/delivery
+tags:
+  - name: internal
+  - name: admin
+paths:
+  /actions/{actionId}:
+    get:
+      tags: [admin]
+      summary: Получить действие
+      operationId: getAction
+      security: [{ oidc: [] }]
+      parameters:
+        - name: actionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Action'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /actions:
+    get:
+      tags: [admin]
+      summary: Список действий по плану
+      operationId: listActions
+      security: [{ oidc: [] }]
+      parameters:
+        - name: planId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPage'
+  /internal/actions:
+    post:
+      tags: [internal]
+      summary: Запросить исполнение действия (используется Plan; обычно через RabbitMQ)
+      operationId: requestAction
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionRequest'
+            example:
+              actionId: "c1d2...-uuid"
+              planId: "9f1c...-uuid"
+              ownerId: "3f2c...-uuid"
+              provider: GIT_PROVIDER
+              actionType: commit
+              params:
+                repo: "org/project-x"
+                message: "fix: handle null case"
+                branch: "feature/x"
+      responses:
+        '202':
+          description: Принято к исполнению
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Action'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Дубликат actionId (идемпотентность)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Action'
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://auth.gonyatbaldu.local/realms/gb/.well-known/openid-configuration
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, maxLength: 128 }
+  responses:
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message, traceId, timestamp]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              issue: { type: string }
+        traceId: { type: string }
+        timestamp: { type: string, format: date-time }
+    ActionRequest:
+      type: object
+      required: [actionId, planId, ownerId, provider, actionType, params]
+      properties:
+        actionId: { type: string, format: uuid }
+        planId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        provider: { type: string, enum: [GIT_PROVIDER, WK_TEAMS, LEDMINE] }
+        actionType: { type: string, enum: [commit, message, ticket_update, compensate] }
+        params:
+          type: object
+          additionalProperties: true
+    Action:
+      type: object
+      required: [id, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [ACCEPTED, IN_PROGRESS, SUCCEEDED, FAILED, COMPENSATED] }
+        externalRef: { type: string, description: "Непрозрачный идентификатор результата" }
+        errorCode: { type: string, nullable: true }
+        retryable: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    ActionPage:
+      type: object
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Action' }
+        page: { type: integer }
+        size: { type: integer }
+        total: { type: integer }

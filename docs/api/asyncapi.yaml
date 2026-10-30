@@ -1,0 +1,396 @@
+asyncapi: 3.0.0
+info:
+  title: ГонятьБалду — асинхронные контракты
+  version: 1.0.0
+  description: >
+    Команды — RabbitMQ, доменные события — Kafka.
+    Конверт события: eventId, eventType, occurredAt, schemaVersion, correlationId, payload.
+servers:
+  rabbit:
+    host: rabbitmq.gonyatbaldu.local:5672
+    protocol: amqp
+    description: Команды (одна очередь на тип действия, ack/retry/DLQ)
+  kafka:
+    host: kafka.gonyatbaldu.local:9092
+    protocol: kafka
+    description: Лог доменных событий (несколько независимых потребителей)
+channels:
+  planCommands:
+    address: plan.commands
+    servers:
+      - $ref: '#/servers/rabbit'
+    messages:
+      ActionRequested:
+        $ref: '#/components/messages/ActionRequested'
+    description: >
+      Команда исполнения действия. Producer: campaign.plan. Consumer: delivery.integrations.
+      Очередь delivery.actions (routing key по actionType).
+  deliveryEvents:
+    address: delivery.events
+    servers:
+      - $ref: '#/servers/kafka'
+    messages:
+      ActionSucceeded: { $ref: '#/components/messages/ActionSucceeded' }
+      ActionFailed:    { $ref: '#/components/messages/ActionFailed' }
+      ActionCompensated: { $ref: '#/components/messages/ActionCompensated' }
+      ProviderRateLimitReached: { $ref: '#/components/messages/ProviderRateLimitReached' }
+    description: >
+      Факты исполнения. Producer: delivery.integrations.
+      Consumers: campaign.plan, behavior.profile, billing.service.
+      Партиционирование по planId (ordering в рамках плана).
+  planEvents:
+    address: plan.events
+    servers:
+      - $ref: '#/servers/kafka'
+    messages:
+      ActivityPlanCreated: { $ref: '#/components/messages/ActivityPlanCreated' }
+      PlanStarted: { $ref: '#/components/messages/PlanStarted' }
+      PlanPaused:  { $ref: '#/components/messages/PlanPaused' }
+      PlanCancelled: { $ref: '#/components/messages/PlanCancelled' }
+    description: >
+      Жизненный цикл плана. Producer: campaign.plan. Consumers: behavior.profile.
+  identityEvents:
+    address: identity.events
+    servers:
+      - $ref: '#/servers/kafka'
+    messages:
+      OwnerRegistered: { $ref: '#/components/messages/OwnerRegistered' }
+      MandateIssued:   { $ref: '#/components/messages/MandateIssued' }
+      MandateRevoked:  { $ref: '#/components/messages/MandateRevoked' }
+    description: >
+      Producer: identity.credentials. Consumers: billing.service, campaign.plan.
+  behaviorEvents:
+    address: behavior.events
+    servers:
+      - $ref: '#/servers/kafka'
+    messages:
+      BehaviorProfileUpdated: { $ref: '#/components/messages/BehaviorProfileUpdated' }
+    description: >
+      Producer: behavior.profile. Consumer: campaign.plan.
+  billingEvents:
+    address: billing.events
+    servers:
+      - $ref: '#/servers/kafka'
+    messages:
+      SubscriptionActivated: { $ref: '#/components/messages/SubscriptionActivated' }
+      SubscriptionExpired:   { $ref: '#/components/messages/SubscriptionExpired' }
+      PaymentSucceeded:      { $ref: '#/components/messages/PaymentSucceeded' }
+      PaymentFailed:         { $ref: '#/components/messages/PaymentFailed' }
+    description: >
+      Producer: billing.service. Consumer: campaign.plan.
+operations:
+  publishActionRequested:
+    action: send
+    channel: { $ref: '#/channels/planCommands' }
+  consumeActionRequested:
+    action: receive
+    channel: { $ref: '#/channels/planCommands' }
+  publishActionSucceeded:
+    action: send
+    channel: { $ref: '#/channels/deliveryEvents' }
+  consumeDeliveryEvents:
+    action: receive
+    channel: { $ref: '#/channels/deliveryEvents' }
+  publishPlanEvents:
+    action: send
+    channel: { $ref: '#/channels/planEvents' }
+  consumePlanEvents:
+    action: receive
+    channel: { $ref: '#/channels/planEvents' }
+  publishIdentityEvents:
+    action: send
+    channel: { $ref: '#/channels/identityEvents' }
+  consumeIdentityEvents:
+    action: receive
+    channel: { $ref: '#/channels/identityEvents' }
+  publishBehaviorEvents:
+    action: send
+    channel: { $ref: '#/channels/behaviorEvents' }
+  consumeBehaviorEvents:
+    action: receive
+    channel: { $ref: '#/channels/behaviorEvents' }
+  publishBillingEvents:
+    action: send
+    channel: { $ref: '#/channels/billingEvents' }
+  consumeBillingEvents:
+    action: receive
+    channel: { $ref: '#/channels/billingEvents' }
+components:
+  messages:
+    ActionRequested:
+      name: ActionRequested
+      title: Действие запрошено к исполнению
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ActionRequestedEnvelope'
+    ActionSucceeded:
+      name: ActionSucceeded
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ActionSucceededEnvelope'
+    ActionFailed:
+      name: ActionFailed
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ActionFailedEnvelope'
+    ActionCompensated:
+      name: ActionCompensated
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ActionCompensatedEnvelope'
+    ProviderRateLimitReached:
+      name: ProviderRateLimitReached
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProviderRateLimitReachedEnvelope'
+    ActivityPlanCreated:
+      name: ActivityPlanCreated
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ActivityPlanCreatedEnvelope'
+    PlanStarted:
+      name: PlanStarted
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/PlanStatusChangedEnvelope'
+    PlanPaused:
+      name: PlanPaused
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/PlanStatusChangedEnvelope'
+    PlanCancelled:
+      name: PlanCancelled
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/PlanStatusChangedEnvelope'
+    OwnerRegistered:
+      name: OwnerRegistered
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OwnerRegisteredEnvelope'
+    MandateIssued:
+      name: MandateIssued
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MandateIssuedEnvelope'
+    MandateRevoked:
+      name: MandateRevoked
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MandateRevokedEnvelope'
+    BehaviorProfileUpdated:
+      name: BehaviorProfileUpdated
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/BehaviorProfileUpdatedEnvelope'
+    SubscriptionActivated:
+      name: SubscriptionActivated
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SubscriptionActivatedEnvelope'
+    SubscriptionExpired:
+      name: SubscriptionExpired
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SubscriptionExpiredEnvelope'
+    PaymentSucceeded:
+      name: PaymentSucceeded
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/PaymentResultEnvelope'
+    PaymentFailed:
+      name: PaymentFailed
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/PaymentResultEnvelope'
+  schemas:
+    EventEnvelope:
+      type: object
+      required: [eventId, eventType, occurredAt, schemaVersion, correlationId, payload]
+      properties:
+        eventId: { type: string, format: uuid }
+        eventType: { type: string }
+        occurredAt: { type: string, format: date-time }
+        schemaVersion: { type: string, example: "1.0" }
+        correlationId: { type: string, description: "planId или actionId" }
+        payload: { type: object }
+    ActionRequestedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: ActionRequested }
+            payload:
+              type: object
+              required: [actionId, planId, ownerId, provider, actionType, params, dueAt]
+              properties:
+                actionId: { type: string, format: uuid }
+                planId: { type: string, format: uuid }
+                ownerId: { type: string, format: uuid }
+                provider: { type: string, enum: [GIT_PROVIDER, WK_TEAMS, LEDMINE] }
+                actionType: { type: string, enum: [commit, message, ticket_update, compensate] }
+                params: { type: object, additionalProperties: true }
+                dueAt: { type: string, format: date-time }
+    ActionSucceededEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: ActionSucceeded }
+            payload:
+              type: object
+              required: [actionId, externalRef]
+              properties:
+                actionId: { type: string, format: uuid }
+                externalRef: { type: string, description: "Непрозрачный идентификатор результата" }
+                at: { type: string, format: date-time }
+    ActionFailedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: ActionFailed }
+            payload:
+              type: object
+              required: [actionId, errorCode, retryable]
+              properties:
+                actionId: { type: string, format: uuid }
+                errorCode: { type: string }
+                retryable: { type: boolean }
+                at: { type: string, format: date-time }
+    ActionCompensatedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: ActionCompensated }
+            payload:
+              type: object
+              required: [actionId, compensationRef]
+              properties:
+                actionId: { type: string, format: uuid }
+                compensationRef: { type: string }
+    ProviderRateLimitReachedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: ProviderRateLimitReached }
+            payload:
+              type: object
+              required: [provider, retryAfterSeconds]
+              properties:
+                provider: { type: string }
+                retryAfterSeconds: { type: integer }
+    ActivityPlanCreatedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: ActivityPlanCreated }
+            payload:
+              type: object
+              required: [planId, ownerId, status]
+              properties:
+                planId: { type: string, format: uuid }
+                ownerId: { type: string, format: uuid }
+                status: { type: string }
+    PlanStatusChangedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [planId, status]
+              properties:
+                planId: { type: string, format: uuid }
+                status: { type: string, enum: [STARTED, PAUSED, CANCELLED] }
+    OwnerRegisteredEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: OwnerRegistered }
+            payload:
+              type: object
+              required: [ownerId, email]
+              properties:
+                ownerId: { type: string, format: uuid }
+                email: { type: string, format: email }
+    MandateIssuedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: MandateIssued }
+            payload:
+              type: object
+              required: [connectionId, provider, expiresAt]
+              properties:
+                connectionId: { type: string, format: uuid }
+                provider: { type: string }
+                expiresAt: { type: string, format: date-time }
+    MandateRevokedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: MandateRevoked }
+            payload:
+              type: object
+              required: [connectionId, reason]
+              properties:
+                connectionId: { type: string, format: uuid }
+                reason: { type: string }
+    BehaviorProfileUpdatedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: BehaviorProfileUpdated }
+            payload:
+              type: object
+              required: [ownerId, version]
+              properties:
+                ownerId: { type: string, format: uuid }
+                version: { type: integer }
+    SubscriptionActivatedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: SubscriptionActivated }
+            payload:
+              type: object
+              required: [ownerId, subscriptionId, tariffId, validTo]
+              properties:
+                ownerId: { type: string, format: uuid }
+                subscriptionId: { type: string, format: uuid }
+                tariffId: { type: string }
+                validTo: { type: string, format: date-time }
+    SubscriptionExpiredEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType: { const: SubscriptionExpired }
+            payload:
+              type: object
+              required: [ownerId, subscriptionId]
+              properties:
+                ownerId: { type: string, format: uuid }
+                subscriptionId: { type: string, format: uuid }
+    PaymentResultEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            payload:
+              type: object
+              required: [paymentId, subscriptionId, status]
+              properties:
+                paymentId: { type: string, format: uuid }
+                subscriptionId: { type: string, format: uuid }
+                status: { type: string, enum: [SUCCEEDED, FAILED] }
+                reason: { type: string }

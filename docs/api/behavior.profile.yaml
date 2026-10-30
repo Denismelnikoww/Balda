@@ -1,0 +1,166 @@
+openapi: 3.0.3
+info:
+  title: behavior.profile
+  version: 1.0.0
+  description: Модель типичного поведения владельца (рабочие часы, стиль, паттерны).
+servers:
+  - url: https://api.gonyatbaldu.local/behavior
+tags:
+  - name: profile
+  - name: patterns
+paths:
+  /owners/{ownerId}/profile:
+    get:
+      tags: [profile]
+      summary: Получить профиль поведения
+      operationId: getProfile
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OwnerId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BehaviorProfile'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [profile]
+      summary: Обновить профиль (ручная настройка)
+      operationId: updateProfile
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OwnerId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BehaviorProfileInput'
+            example:
+              workingHours: { from: "09:00", to: "18:00" }
+              timezone: "Europe/Moscow"
+              style: "CONCISE"
+      responses:
+        '200':
+          description: Обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BehaviorProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /owners/{ownerId}/patterns:
+    get:
+      tags: [patterns]
+      summary: Паттерны активности за окно
+      operationId: listPatterns
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OwnerId'
+        - name: window
+          in: query
+          schema: { type: string, enum: [7d, 30d, 90d], default: 30d }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatternPage'
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://auth.gonyatbaldu.local/realms/gb/.well-known/openid-configuration
+  parameters:
+    OwnerId:
+      name: ownerId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+  responses:
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message, traceId, timestamp]
+      properties:
+        code: { type: string, example: NOT_FOUND }
+        message: { type: string }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              issue: { type: string }
+        traceId: { type: string }
+        timestamp: { type: string, format: date-time }
+    BehaviorProfileInput:
+      type: object
+      properties:
+        workingHours:
+          type: object
+          properties:
+            from: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+            to:   { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+        timezone: { type: string, example: "Europe/Moscow" }
+        style: { type: string, enum: [CONCISE, VERBOSE, FORMAL, CASUAL] }
+    BehaviorProfile:
+      allOf:
+        - $ref: '#/components/schemas/BehaviorProfileInput'
+        - type: object
+          required: [ownerId, version, updatedAt]
+          properties:
+            ownerId: { type: string, format: uuid }
+            version: { type: integer }
+            updatedAt: { type: string, format: date-time }
+    ActivityPattern:
+      type: object
+      required: [id, kind, provider, score, observedAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, example: COMMIT_TIME_PEAK }
+        provider: { type: string, enum: [GIT_PROVIDER, WK_TEAMS, LEDMINE] }
+        score: { type: number, format: double, minimum: 0, maximum: 1 }
+        observedAt: { type: string, format: date-time }
+    PatternPage:
+      type: object
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ActivityPattern' }
+        page: { type: integer }
+        size: { type: integer }
+        total: { type: integer }

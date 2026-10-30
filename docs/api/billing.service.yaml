@@ -1,0 +1,164 @@
+  /subscriptions:
+    post:
+      tags: [subscription]
+      summary: Оформить подписку
+      operationId: createSubscription
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSubscriptionRequest'
+            example:
+              ownerId: "3f2c...-uuid"
+              tariffId: "pro-monthly"
+      responses:
+        '201':
+          description: Подписка создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Подписка уже активна
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /payments:
+    post:
+      tags: [payments]
+      summary: Инициировать платёж через платёжный шлюз
+      operationId: createPayment
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+            example:
+              subscriptionId: "d4e5...-uuid"
+              amount: 990
+              currency: RUB
+      responses:
+        '201':
+          description: Платёж создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '402':
+          description: Платёж отклонён шлюзом
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /payments/{paymentId}:
+    get:
+      tags: [payments]
+      summary: Статус платежа
+      operationId: getPayment
+      security: [{ oidc: [] }]
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://auth.gonyatbaldu.local/realms/gb/.well-known/openid-configuration
+  parameters:
+    OwnerId:
+      name: ownerId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, maxLength: 128 }
+  responses:
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message, traceId, timestamp]
+      properties:
+        code: { type: string, example: PAYMENT_DECLINED }
+        message: { type: string }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              issue: { type: string }
+        traceId: { type: string }
+        timestamp: { type: string, format: date-time }
+    CreateSubscriptionRequest:
+      type: object
+      required: [ownerId, tariffId]
+      properties:
+        ownerId: { type: string, format: uuid }
+        tariffId: { type: string, example: "pro-monthly" }
+    Subscription:
+      type: object
+      required: [id, ownerId, tariffId, status, validFrom]
+      properties:
+        id: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        tariffId: { type: string }
+        status: { type: string, enum: [PENDING, ACTIVE, EXPIRED, CANCELLED] }
+        validFrom: { type: string, format: date-time }
+        validTo: { type: string, format: date-time }
+    CreatePaymentRequest:
+      type: object
+      required: [subscriptionId, amount, currency]
+      properties:
+        subscriptionId: { type: string, format: uuid }
+        amount: { type: number, minimum: 0 }
+        currency: { type: string, enum: [RUB, USD, EUR] }
+    Payment:
+      type: object
+      required: [id, subscriptionId, amount, currency, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        subscriptionId: { type: string, format: uuid }
+        amount: { type: number }
+        currency: { type: string }
+        status: { type: string, enum: [PENDING, SUCCEEDED, FAILED] }
+        providerRef: { type: string, description: "Ссылка на транзакцию в платёжном шлюзе" }
+        createdAt: { type: string, format: date-time }

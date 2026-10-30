@@ -1,0 +1,336 @@
+openapi: 3.0.3
+info:
+  title: campaign.plan
+  version: 1.0.0
+  description: Ядро. Намерения, планы активности, шаги, сага исполнения.
+servers:
+  - url: https://api.gonyatbaldu.local/planning
+tags:
+  - name: intents
+  - name: plans
+  - name: internal
+paths:
+  /intents:
+    post:
+      tags: [intents]
+      summary: Сформулировать намерение
+      operationId: submitIntent
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitIntentRequest'
+            example:
+              ownerId: "3f2c...-uuid"
+              text: "работаю над проектом X в эти выходные"
+              window: { from: "2026-11-01T00:00:00Z", to: "2026-11-03T00:00:00Z" }
+      responses:
+        '201':
+          description: Намерение принято
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Intent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /plans:
+    post:
+      tags: [plans]
+      summary: Сгенерировать план по намерению
+      operationId: createPlan
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlanRequest'
+            example:
+              intentId: "a1b2...-uuid"
+              providers: [GIT_PROVIDER, WK_TEAMS, LEDMINE]
+              intensity: MEDIUM
+      responses:
+        '201':
+          description: План создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityPlan'
+        '409':
+          description: Нет действующего мандата или подписки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [plans]
+      summary: Список планов владельца
+      operationId: listPlans
+      security: [{ oidc: [] }]
+      parameters:
+        - name: ownerId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [DRAFT, SCHEDULED, RUNNING, PAUSED, CANCELLED, COMPLETED] }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanPage'
+  /plans/{planId}:
+    get:
+      tags: [plans]
+      summary: Получить план
+      operationId: getPlan
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityPlan'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [plans]
+      summary: Скорректировать план
+      operationId: adjustPlan
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdjustPlanRequest'
+            example:
+              intensity: HIGH
+              providers: [GIT_PROVIDER, WK_TEAMS]
+      responses:
+        '200':
+          description: Обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityPlan'
+        '409':
+          description: План уже запущен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /plans/{planId}/start:
+    post:
+      tags: [plans]
+      summary: Запустить план
+      operationId: startPlan
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Запущен (сага стартовала)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityPlan'
+        '409':
+          description: Нельзя запустить в текущем статусе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /plans/{planId}/pause:
+    post:
+      tags: [plans]
+      summary: Приостановить план
+      operationId: pausePlan
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Приостановлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityPlan'
+  /plans/{planId}/cancel:
+    post:
+      tags: [plans]
+      summary: Отменить план (с компенсациями)
+      operationId: cancelPlan
+      security: [{ oidc: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Отмена запущена (компенсации через сагу)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityPlan'
+  /internal/plans/{planId}/steps:
+    get:
+      tags: [internal]
+      summary: Внутренний список шагов (для отладки/Delivery admin)
+      operationId: listPlanStepsInternal
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PlanStep' }
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://auth.gonyatbaldu.local/realms/gb/.well-known/openid-configuration
+  parameters:
+    PlanId:
+      name: planId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, maxLength: 128 }
+  responses:
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message, traceId, timestamp]
+      properties:
+        code: { type: string, example: CONFLICT }
+        message: { type: string }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              issue: { type: string }
+        traceId: { type: string }
+        timestamp: { type: string, format: date-time }
+    SubmitIntentRequest:
+      type: object
+      required: [ownerId, text, window]
+      properties:
+        ownerId: { type: string, format: uuid }
+        text: { type: string, minLength: 3, maxLength: 1000 }
+        window:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to:   { type: string, format: date-time }
+    Intent:
+      type: object
+      required: [id, ownerId, text, window, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        text: { type: string }
+        window:
+          type: object
+          properties:
+            from: { type: string, format: date-time }
+            to:   { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    CreatePlanRequest:
+      type: object
+      required: [intentId, providers]
+      properties:
+        intentId: { type: string, format: uuid }
+        providers:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [GIT_PROVIDER, WK_TEAMS, LEDMINE] }
+        intensity: { type: string, enum: [LOW, MEDIUM, HIGH], default: MEDIUM }
+    AdjustPlanRequest:
+      type: object
+      properties:
+        providers:
+          type: array
+          items: { type: string, enum: [GIT_PROVIDER, WK_TEAMS, LEDMINE] }
+        intensity: { type: string, enum: [LOW, MEDIUM, HIGH] }
+    PlanStep:
+      type: object
+      required: [id, planId, provider, actionType, dueAt, status]
+      properties:
+        id: { type: string, format: uuid }
+        planId: { type: string, format: uuid }
+        provider: { type: string, enum: [GIT_PROVIDER, WK_TEAMS, LEDMINE] }
+        actionType: { type: string, enum: [commit, message, ticket_update] }
+        dueAt: { type: string, format: date-time }
+        status: { type: string, enum: [SCHEDULED, REQUESTED, DONE, FAILED, COMPENSATED] }
+    ActivityPlan:
+      type: object
+      required: [id, intentId, ownerId, status, steps, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        intentId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        status: { type: string, enum: [DRAFT, SCHEDULED, RUNNING, PAUSED, CANCELLED, COMPLETED] }
+        intensity: { type: string, enum: [LOW, MEDIUM, HIGH] }
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/PlanStep' }
+        createdAt: { type: string, format: date-time }
+    PlanPage:
+      type: object
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ActivityPlan' }
+        page: { type: integer }
+        size: { type: integer }
+        total: { type: integer }
